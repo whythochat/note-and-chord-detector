@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Note Detector — POC</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #14161c;
+      --panel: #1d2029;
+      --accent: #6ee7b7;
+      --dim: #8a90a2;
+      --text: #f2f4f8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1.5rem;
+      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 2rem;
+    }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0; color: var(--dim); }
+    .note {
+      font-size: 6rem;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: -0.02em;
+      min-height: 6rem;
+    }
+    .note small { font-size: 2rem; color: var(--accent); vertical-align: super; }
+    .readout {
+      display: flex;
+      gap: 2rem;
+      font-variant-numeric: tabular-nums;
+      color: var(--dim);
+      font-size: 0.95rem;
+    }
+    .readout b { color: var(--text); font-weight: 600; }
+    .cents-bar {
+      width: 280px;
+      height: 8px;
+      background: var(--panel);
+      border-radius: 99px;
+      position: relative;
+      overflow: hidden;
+    }
+    .cents-bar .center { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: var(--dim); }
+    .cents-bar .needle {
+      position: absolute; top: -3px; width: 14px; height: 14px; border-radius: 50%;
+      background: var(--accent); transform: translateX(-50%); left: 50%;
+      transition: left 0.06s linear;
+    }
+    button {
+      font: inherit; font-weight: 600;
+      padding: 0.7rem 1.4rem; border-radius: 99px; border: none; cursor: pointer;
+      background: var(--accent); color: #062018;
+    }
+    button.stop { background: #ef6e6e; color: #2a0808; }
+    .status { color: var(--dim); font-size: 0.85rem; min-height: 1.2rem; }
+  </style>
+</head>
+<body>
+  <h1>Live Note Detector</h1>
+  <div class="note" id="note">—</div>
+  <div class="cents-bar"><div class="center"></div><div class="needle" id="needle"></div></div>
+  <div class="readout">
+    <span>freq <b id="freq">—</b> Hz</span>
+    <span>cents <b id="cents">—</b></span>
+    <span>clarity <b id="clarity">—</b></span>
+  </div>
+  <button id="toggle">Start listening</button>
+  <div class="status" id="status">Click start and allow microphone access.</div>
+
+  <script>
+    const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+
+    const els = {
+      note: document.getElementById("note"),
+      freq: document.getElementById("freq"),
+      cents: document.getElementById("cents"),
+      clarity: document.getElementById("clarity"),
+      needle: document.getElementById("needle"),
+      status: document.getElementById("status"),
+      toggle: document.getElementById("toggle"),
+    };
+
+    let audioCtx, analyser, source, stream, rafId;
+    let running = false;
+    let buf;
+
+    function freqToNote(freq) {
+      // MIDI note number, A4 = 440Hz = MIDI 69
+      const midi = 69 + 12 * Math.log2(freq / 440);
+      const rounded = Math.round(midi);
+      const name = NOTE_NAMES[((rounded % 12) + 12) % 12];
+      const octave = Math.floor(rounded / 12) - 1;
+      const cents = Math.round((midi - rounded) * 100);
+      return { name, octave, cents };
+    }
+
+    // McLeod Pitch Method (MPM). Returns [freq, clarity] or [-1, 0].
+    // Picks the FIRST strong periodicity peak, which avoids the octave-up
+    // errors that plain "tallest peak" autocorrelation suffers on low notes
+    // whose fundamental is weaker than the 2nd harmonic.
+    function detectPitch(buf, sampleRate) {
+      const N = buf.length;
+      let rms = 0;
+      for (let i = 0; i < N; i++) rms += buf[i] * buf[i];
+      rms = Math.sqrt(rms / N);
+      if (rms < 0.01) return [-1, 0]; // too quiet
+
+      // Normalized Square Difference Function (NSDF), range -1..1.
+      const nsdf = new Float32Array(N);
+      for (let tau = 0; tau < N; tau++) {
+        let acf = 0, div = 0;
+        for (let i = 0; i < N - tau; i++) {
+          acf += buf[i] * buf[i + tau];
+          div += buf[i] * buf[i] + buf[i + tau] * buf[i + tau];
+        }
+        nsdf[tau] = div > 0 ? (2 * acf) / div : 0;
+      }
+
+      // Collect "key maxima": local maxima in the positive regions of the NSDF.
+      const maxima = [];
+      let tau = 1;
+      while (tau < N - 1 && nsdf[tau] > 0) tau++; // descend past the tau=0 peak
+      while (tau < N - 1) {
+        if (nsdf[tau] > 0 && nsdf[tau] >= nsdf[tau - 1] && nsdf[tau] > nsdf[tau + 1]) {
+          // parabolic interpolation for sub-sample accuracy
+          const a = nsdf[tau - 1], b = nsdf[tau], cc = nsdf[tau + 1];
+          const denom = a - 2 * b + cc;
+          const shift = denom !== 0 ? (0.5 * (a - cc)) / denom : 0;
+          maxima.push([tau + shift, b - 0.25 * (a - cc) * shift]);
+        }
+        tau++;
+      }
+      if (maxima.length === 0) return [-1, 0];
+
+      // Choose the first maximum that clears 90% of the strongest one.
+      let highest = 0;
+      for (const m of maxima) if (m[1] > highest) highest = m[1];
+      const threshold = 0.9 * highest;
+      let chosen = maxima[0];
+      for (const m of maxima) if (m[1] >= threshold) { chosen = m; break; }
+
+      const period = chosen[0];
+      if (period <= 0) return [-1, 0];
+      return [sampleRate / period, chosen[1]];
+    }
+
+    function loop() {
+      analyser.getFloatTimeDomainData(buf);
+      const [freq, clarity] = detectPitch(buf, audioCtx.sampleRate);
+
+      if (freq > 0 && clarity > 0.8) {
+        const { name, octave, cents } = freqToNote(freq);
+        els.note.innerHTML = `${name}<small>${octave}</small>`;
+        els.freq.textContent = freq.toFixed(1);
+        els.cents.textContent = (cents >= 0 ? "+" : "") + cents;
+        els.clarity.textContent = clarity.toFixed(2);
+        // cents range -50..+50 mapped to 0..100% of bar
+        const pct = Math.max(0, Math.min(100, ((cents + 50) / 100) * 100));
+        els.needle.style.left = pct + "%";
+        els.needle.style.background = Math.abs(cents) < 8 ? "var(--accent)" : "#f0c860";
+      } else {
+        els.note.textContent = "—";
+        els.freq.textContent = "—";
+        els.cents.textContent = "—";
+        els.clarity.textContent = "—";
+      }
+      rafId = requestAnimationFrame(loop);
+    }
+
+    async function start() {
+      try {
+        els.status.textContent = "Requesting microphone…";
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        });
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 2048;
+        buf = new Float32Array(analyser.fftSize);
+        source = audioCtx.createMediaStreamSource(stream);
+        source.connect(analyser);
+        running = true;
+        els.toggle.textContent = "Stop";
+        els.toggle.classList.add("stop");
+        els.status.textContent = "Listening… play a single note.";
+        loop();
+      } catch (e) {
+        els.status.textContent = "Error: " + e.message;
+      }
+    }
+
+    function stop() {
+      running = false;
+      cancelAnimationFrame(rafId);
+      if (stream) stream.getTracks().forEach((t) => t.stop());
+      if (audioCtx) audioCtx.close();
+      els.toggle.textContent = "Start listening";
+      els.toggle.classList.remove("stop");
+      els.status.textContent = "Stopped.";
+      els.note.textContent = "—";
+    }
+
+    els.toggle.addEventListener("click", () => (running ? stop() : start()));
+  </script>
+</body>
+</html>
