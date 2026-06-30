@@ -354,8 +354,13 @@ setupTheme();
 function setupHeart() {
   const heart = document.getElementById("heart");
   if (!heart) return;
-  const beat = () => heart.classList.add("beating");
+  const beat = () => {
+    heart.classList.remove("beating");
+    void heart.offsetWidth; // force reflow so the animation restarts every time
+    heart.classList.add("beating");
+  };
   heart.addEventListener("click", beat);
+  heart.addEventListener("touchstart", beat, { passive: true });
   heart.addEventListener("animationend", () => heart.classList.remove("beating"));
 }
 

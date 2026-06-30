@@ -137,7 +137,8 @@ button.stop { background: #ef6e6e; color: #fff; }
   transform-origin: center;
 }
 .credit:hover .heart { animation: heartbeat 0.7s ease-in-out infinite; }
-.credit .heart.beating { animation: heartbeat 0.7s ease-in-out 3; }
+/* !important so a click/tap beat overrides the hover animation */
+.credit .heart.beating { animation: heartbeat 0.7s ease-in-out 3 !important; }
 @keyframes heartbeat {
   0%, 100% { transform: scale(1); }
   15% { transform: scale(1.35); }
