@@ -1,0 +1,62 @@
+// Musical constants and frequency <-> note helpers.
+
+const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+// Triad templates as semitone offsets from the root.
+const QUALITIES = [
+  { name: "major",      symbol: "",    intervals: [0, 4, 7] },
+  { name: "minor",      symbol: "m",   intervals: [0, 3, 7] },
+  { name: "diminished", symbol: "dim", intervals: [0, 3, 6] },
+  { name: "augmented",  symbol: "aug", intervals: [0, 4, 8] },
+];
+
+/**
+ * Convert a frequency to a (possibly fractional) MIDI note number, using the
+ * standard tuning where A4 = 440 Hz = MIDI 69.
+ *
+ * @param {number} freq - Frequency in Hz (must be > 0).
+ * @returns {number} The MIDI note number; fractional part indicates detuning.
+ */
+function freqToMidi(freq) {
+  return 69 + 12 * Math.log2(freq / 440);
+}
+
+/**
+ * Convert a frequency to its nearest note, with how far it is from being in tune.
+ *
+ * @param {number} freq - Frequency in Hz (must be > 0).
+ * @returns {{name: string, octave: number, cents: number}} The note name
+ *   (e.g. "C#"), its octave number (scientific pitch notation, A4 in octave 4),
+ *   and the signed offset from perfect pitch in cents (-50..+50).
+ */
+function freqToNote(freq) {
+  const midi = freqToMidi(freq);
+  const rounded = Math.round(midi);
+  const name = NOTE_NAMES[((rounded % 12) + 12) % 12];
+  const octave = Math.floor(rounded / 12) - 1;
+  const cents = Math.round((midi - rounded) * 100);
+  return { name, octave, cents };
+}
+
+/**
+ * Reduce a frequency to its pitch class, discarding octave information.
+ *
+ * @param {number} freq - Frequency in Hz (must be > 0).
+ * @returns {number} The pitch class as an integer 0..11, where 0 = C, 1 = C#, …
+ */
+function freqToPitchClass(freq) {
+  const rounded = Math.round(freqToMidi(freq));
+  return ((rounded % 12) + 12) % 12;
+}
+
+/**
+ * List the note names that make up a chord, e.g. C major -> ["C", "E", "G"].
+ *
+ * @param {number} root - Root pitch class, 0..11 (0 = C).
+ * @param {{intervals: number[]}} quality - A quality from {@link QUALITIES};
+ *   its `intervals` are semitone offsets from the root.
+ * @returns {string[]} The chord-tone names, in template order.
+ */
+function chordToneNames(root, quality) {
+  return quality.intervals.map((iv) => NOTE_NAMES[(root + iv) % 12]);
+}
