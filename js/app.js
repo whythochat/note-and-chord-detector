@@ -23,9 +23,36 @@ const settings = {
   history: 6,             // frames of majority-vote smoothing
   harmonicDecay: 0.6,     // overtone weight baked into templates
   spectrumSmoothing: 0.8, // AnalyserNode smoothingTimeConstant
+  chordSet: "sevenths",   // which chord tiers can be detected
+  inversions: true,       // detect bass note / slash chords
 };
 
 // ---------- main analysis pass ----------
+
+/**
+ * @typedef {Object} Detection
+ * @property {"silent"|"note"|"chord"} kind - What was detected this frame.
+ * @property {string} [name] - Note name (when kind === "note"), e.g. "C#".
+ * @property {number|string} [octave] - Note octave (when kind === "note");
+ *   empty string when the octave is unknown.
+ * @property {number} [freq] - Detected frequency in Hz (kind === "note");
+ *   0 when unknown.
+ * @property {number} [cents] - Cents offset from perfect pitch (kind === "note").
+ * @property {number} [root] - Chord root pitch class 0..11 (kind === "chord").
+ * @property {object} [quality] - Chord quality from QUALITIES (kind === "chord").
+ * @property {string[]} [notes] - Chord-tone names (kind === "chord").
+ * @property {number} [bass] - Bass pitch class when inverted (kind === "chord").
+ * @property {number} [inversion] - Inversion index 1..3 when inverted.
+ */
+
+/**
+ * Run one analysis frame: read the latest audio, decide whether it's a single
+ * note or a chord, and package the result for rendering. Reads the module-level
+ * `analyser`/`audioCtx` and the live `settings`.
+ *
+ * @returns {Detection} The detection for this frame (`{ kind: "silent" }` when
+ *   too quiet or below the confidence threshold).
+ */
 function analyze() {
   analyser.getFloatTimeDomainData(timeBuf);
   const slice = timeBuf.subarray(timeBuf.length - 2048); // smaller window for MPM
@@ -45,12 +72,27 @@ function analyze() {
     return { kind: "note", freq: 0, name: NOTE_NAMES[best.root], octave: "", cents: 0 };
   }
 
-  return {
+  const result = {
     kind: "chord",
     root: best.root,
     quality: best.quality,
     notes: chordToneNames(best.root, best.quality),
   };
+
+  // Bass note / inversion: a chord tone other than the root in the bass.
+  if (settings.inversions) {
+    const bass = detectBass(freqBuf, audioCtx.sampleRate, analyser.fftSize);
+    if (bass && bass.pitchClass !== best.root) {
+      const idx = best.quality.intervals.findIndex(
+        (iv) => (best.root + iv) % 12 === bass.pitchClass
+      );
+      if (idx > 0) {
+        result.bass = bass.pitchClass;
+        result.inversion = idx;
+      }
+    }
+  }
+  return result;
 }
 
 // ---------- temporal smoothing ----------
@@ -58,12 +100,29 @@ function analyze() {
 // between near-relatives (e.g. C major vs A minor share two notes).
 const history = [];
 
+/**
+ * Build a stable identity string for a detection, used to group equal results
+ * across frames. Ignores volatile fields (cents, frequency) so the same note or
+ * chord maps to one key regardless of small tuning fluctuations.
+ *
+ * @param {Detection} r - A detection from {@link analyze}.
+ * @returns {string} The grouping key, e.g. "silent", "note:C#", "chord:0:major".
+ */
 function resultKey(r) {
   if (!r || r.kind === "silent") return "silent";
   if (r.kind === "note") return "note:" + r.name;
-  return "chord:" + r.root + ":" + r.quality.name;
+  return "chord:" + r.root + ":" + r.quality.name + ":" + (r.bass ?? "");
 }
 
+/**
+ * Smooth detections over time by majority vote across the last `settings.history`
+ * frames, suppressing flicker between near-relatives (e.g. C major vs A minor,
+ * which share two notes). Mutates the module-level `history` buffer.
+ *
+ * @param {Detection} r - The current frame's detection.
+ * @returns {Detection} The most recent detection whose key wins the vote (so
+ *   live fields like cents/frequency stay fresh).
+ */
 function stabilize(r) {
   history.push({ key: resultKey(r), result: r });
   while (history.length > settings.history) history.shift();
@@ -81,11 +140,26 @@ function stabilize(r) {
 }
 
 // ---------- rendering ----------
+
+/**
+ * Toggle between the single-note tuner view and the chord note-list view.
+ *
+ * @param {boolean} show - `true` to show the tuner (note mode), `false` to show
+ *   the chord chips (chord mode).
+ * @returns {void}
+ */
 function showTuner(show) {
   els.tuner.classList.toggle("hidden", !show);
   els.notes.classList.toggle("hidden", show);
 }
 
+/**
+ * Render a detection into the DOM: the big readout, the kind label, and either
+ * the tuner (note) or the note chips (chord). Clears everything for silence.
+ *
+ * @param {Detection|null} r - The detection to display; `null`/silent resets the UI.
+ * @returns {void}
+ */
 function render(r) {
   if (!r || r.kind === "silent") {
     els.display.textContent = "—";
@@ -119,17 +193,33 @@ function render(r) {
   showTuner(false);
   els.display.classList.add("chord");
   const rootName = NOTE_NAMES[r.root];
-  els.display.innerHTML = `${rootName}<small>${r.quality.symbol}</small>`;
-  els.kindLabel.textContent = `${rootName} ${r.quality.name}`;
+  const slash = r.bass != null ? `/${NOTE_NAMES[r.bass]}` : "";
+  els.display.innerHTML = `${rootName}<small>${r.quality.symbol}</small>${slash}`;
+  els.kindLabel.textContent = `${rootName} ${r.quality.name}` +
+    (r.inversion ? ` · ${inversionName(r.inversion)}` : "");
   els.notes.innerHTML = r.notes.map((n) => `<span class="chip">${n}</span>`).join("");
 }
 
 // ---------- loop / lifecycle ----------
+
+/**
+ * The per-frame pipeline: analyze → smooth → render, rescheduled via
+ * `requestAnimationFrame` until {@link stop} cancels it.
+ *
+ * @returns {void}
+ */
 function loop() {
   render(stabilize(analyze()));
   rafId = requestAnimationFrame(loop);
 }
 
+/**
+ * Request microphone access, set up the audio graph (AnalyserNode), and start
+ * the analysis loop. Updates the toggle button and status text. On failure
+ * (e.g. permission denied) the error is shown in the status line.
+ *
+ * @returns {Promise<void>} Resolves once the loop has started (or failed gracefully).
+ */
 async function start() {
   try {
     els.status.textContent = "Requesting microphone…";
@@ -155,6 +245,12 @@ async function start() {
   }
 }
 
+/**
+ * Stop the analysis loop, release the microphone, and tear down the audio
+ * context. Resets the UI to its idle state.
+ *
+ * @returns {void}
+ */
 function stop() {
   running = false;
   cancelAnimationFrame(rafId);
@@ -169,7 +265,23 @@ function stop() {
 els.toggle.addEventListener("click", () => (running ? stop() : start()));
 
 // ---------- settings sliders ----------
+
+/**
+ * Wire each Settings range input to its key in `settings`: set the slider's
+ * initial value, keep the value label in sync, and update `settings` (plus any
+ * side effect) whenever the user drags it.
+ *
+ * @returns {void}
+ */
 function setupControls() {
+  /**
+   * Bind one slider to a settings key.
+   * @param {string} id - Element id of the `<input type="range">`; its value
+   *   label is expected at `id + "Val"`.
+   * @param {string} key - Property of `settings` this slider controls.
+   * @param {(value: number) => string} fmt - Formats the value for the label.
+   * @param {(value: number) => void} [onChange] - Optional side effect to run on change.
+   */
   const bind = (id, key, fmt, onChange) => {
     const input = document.getElementById(id);
     const out = document.getElementById(id + "Val");
@@ -188,6 +300,44 @@ function setupControls() {
   bind("spectrumSmoothing", "spectrumSmoothing", (v) => v.toFixed(2), (v) => {
     if (analyser) analyser.smoothingTimeConstant = v;
   });
+
+  // Chord-set selector (a <select>, so it's wired separately from the sliders).
+  const chordSetEl = document.getElementById("chordSet");
+  chordSetEl.value = settings.chordSet;
+  setChordSet(settings.chordSet);
+  chordSetEl.addEventListener("change", () => {
+    settings.chordSet = chordSetEl.value;
+    setChordSet(settings.chordSet);
+  });
+
+  // Inversion detection toggle (a checkbox).
+  const inversionsEl = document.getElementById("inversions");
+  inversionsEl.checked = settings.inversions;
+  inversionsEl.addEventListener("change", () => {
+    settings.inversions = inversionsEl.checked;
+  });
 }
 
 setupControls();
+
+// ---------- theme toggle ----------
+
+/**
+ * Wire the theme toggle button: label it with the theme it will switch to, and
+ * flip between light and dark on click. Theme reads/writes live in theme.js.
+ *
+ * @returns {void}
+ */
+function setupTheme() {
+  const btn = document.getElementById("themeToggle");
+  const sync = () => {
+    btn.textContent = currentTheme() === "light" ? "🌙 Dark" : "☀️ Light";
+  };
+  sync();
+  btn.addEventListener("click", () => {
+    setTheme(currentTheme() === "light" ? "dark" : "light");
+    sync();
+  });
+}
+
+setupTheme();

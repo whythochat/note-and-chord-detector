@@ -3,10 +3,16 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Note & Chord Detector</title>
+        <title>Guy With Perfect Pitch</title>
         <link rel="stylesheet" href="styles.css" />
+        <!-- Applies the saved theme before paint to avoid a flash. -->
+        <script src="js/theme.js"></script>
     </head>
     <body>
+        <button id="themeToggle" class="theme-toggle" type="button">
+            Theme
+        </button>
+
         <h1>Guy with Perfect Pitch</h1>
 
         <div class="display" id="display">—</div>
@@ -34,6 +40,19 @@
 
         <details class="settings">
             <summary>Settings</summary>
+            <div class="control">
+                <label for="chordSet">Chord set</label>
+                <select id="chordSet">
+                    <option value="triads">Triads only</option>
+                    <option value="sevenths">Triads + 7ths</option>
+                    <option value="all">All (7ths + sus)</option>
+                </select>
+                <small>Limit which chords can be detected.</small>
+            </div>
+            <div class="control control-inline">
+                <label for="inversions">Detect inversions</label>
+                <input type="checkbox" id="inversions" />
+            </div>
             <div class="control">
                 <label for="confidence"
                     >Confidence <span id="confidenceVal"></span
@@ -65,7 +84,11 @@
                     max="0.85"
                     step="0.01"
                 />
-                <small>How much overtone energy the templates assume.</small>
+                <small>
+                    How rich the detector assumes each note's overtones are.
+                    Raise it if single notes get misread as chords; lower it if
+                    chords collapse into single notes.
+                </small>
             </div>
             <div class="control">
                 <label for="spectrumSmoothing"

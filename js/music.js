@@ -2,12 +2,26 @@
 
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
-// Triad templates as semitone offsets from the root.
+// Chord qualities, each defined by semitone offsets from the root.
+//   symbol     - compact label for the display (e.g. "m7")
+//   intervals  - chord tones as semitones above the root
+//   group      - "triad" | "seventh" | "sus", used by the chord-set selector
+//   complexity - bias against fancier chords; a higher value must beat a
+//                simpler match by a larger margin to be chosen
 const QUALITIES = [
-  { name: "major",      symbol: "",    intervals: [0, 4, 7] },
-  { name: "minor",      symbol: "m",   intervals: [0, 3, 7] },
-  { name: "diminished", symbol: "dim", intervals: [0, 3, 6] },
-  { name: "augmented",  symbol: "aug", intervals: [0, 4, 8] },
+  { name: "major",      symbol: "",    intervals: [0, 4, 7], group: "triad", complexity: 0 },
+  { name: "minor",      symbol: "m",   intervals: [0, 3, 7], group: "triad", complexity: 0 },
+  { name: "diminished", symbol: "dim", intervals: [0, 3, 6], group: "triad", complexity: 0 },
+  { name: "augmented",  symbol: "aug", intervals: [0, 4, 8], group: "triad", complexity: 0 },
+
+  { name: "major 7th",          symbol: "maj7", intervals: [0, 4, 7, 11], group: "seventh", complexity: 1 },
+  { name: "dominant 7th",       symbol: "7",    intervals: [0, 4, 7, 10], group: "seventh", complexity: 1 },
+  { name: "minor 7th",          symbol: "m7",   intervals: [0, 3, 7, 10], group: "seventh", complexity: 1 },
+  { name: "diminished 7th",     symbol: "dim7", intervals: [0, 3, 6, 9],  group: "seventh", complexity: 1 },
+  { name: "half-diminished 7th", symbol: "m7♭5", intervals: [0, 3, 6, 10], group: "seventh", complexity: 1 },
+
+  { name: "suspended 2nd", symbol: "sus2", intervals: [0, 2, 7], group: "sus", complexity: 1 },
+  { name: "suspended 4th", symbol: "sus4", intervals: [0, 5, 7], group: "sus", complexity: 1 },
 ];
 
 /**
@@ -47,6 +61,17 @@ function freqToNote(freq) {
 function freqToPitchClass(freq) {
   const rounded = Math.round(freqToMidi(freq));
   return ((rounded % 12) + 12) % 12;
+}
+
+/**
+ * Human-readable name for an inversion index.
+ *
+ * @param {number} n - Position of the bass within the chord's intervals:
+ *   0 = root, 1 = third, 2 = fifth, 3 = seventh.
+ * @returns {string} e.g. "root position", "1st inversion", … ("" if unknown).
+ */
+function inversionName(n) {
+  return ["root position", "1st inversion", "2nd inversion", "3rd inversion"][n] || "";
 }
 
 /**

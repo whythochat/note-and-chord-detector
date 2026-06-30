@@ -26,13 +26,45 @@ function l2normalize(v) {
 const HARMONIC_COUNT = 6;
 
 /**
- * The candidate bank, rebuilt by {@link buildTemplates}. Each entry is a
+ * The full candidate bank, rebuilt by {@link buildTemplates}. Each entry is a
  * normalized 12-d chroma template:
- *   - `{ type: "note",  root, vec }` for each of the 12 single notes
- *   - `{ type: "chord", root, quality, vec }` for each root x triad quality
- * @type {Array<{type: string, root: number, quality?: object, vec: Float32Array}>}
+ *   - `{ type: "note",  root, vec, complexity }` for each of the 12 single notes
+ *   - `{ type: "chord", root, quality, vec, complexity }` for each root x quality
+ * @type {Array<{type: string, root: number, quality?: object, vec: Float32Array, complexity: number}>}
  */
 let CANDIDATES = [];
+
+/**
+ * The subset of {@link CANDIDATES} currently eligible for matching, after the
+ * chord-set selector is applied by {@link setChordSet}.
+ * @type {Array<object>}
+ */
+let ACTIVE_CANDIDATES = [];
+
+let activeChordSet = "sevenths";
+
+/** Which quality groups each chord-set option allows (notes are always on). */
+const CHORD_SET_GROUPS = {
+  triads: ["triad"],
+  sevenths: ["triad", "seventh"],
+  all: ["triad", "seventh", "sus"],
+};
+
+/**
+ * Restrict matching to a chord-set tier by filtering {@link CANDIDATES} into
+ * {@link ACTIVE_CANDIDATES}. Single notes are always kept.
+ *
+ * @param {"triads"|"sevenths"|"all"} set - The tier to activate.
+ * @returns {void}
+ */
+function setChordSet(set) {
+  if (!CHORD_SET_GROUPS[set]) set = "all";
+  activeChordSet = set;
+  const allowed = new Set(CHORD_SET_GROUPS[set]);
+  ACTIVE_CANDIDATES = CANDIDATES.filter(
+    (c) => c.type === "note" || allowed.has(c.quality.group)
+  );
+}
 
 /**
  * (Re)build the template bank — 12 single notes plus 12 roots x 4 triad
@@ -61,7 +93,7 @@ function buildTemplates(decay) {
 
   const list = [];
   for (let p = 0; p < 12; p++) {
-    list.push({ type: "note", root: p, vec: l2normalize(notes[p]) });
+    list.push({ type: "note", root: p, vec: l2normalize(notes[p]), complexity: 0 });
   }
   for (let root = 0; root < 12; root++) {
     for (const q of QUALITIES) {
@@ -70,10 +102,11 @@ function buildTemplates(decay) {
         const nt = notes[(root + iv) % 12];
         for (let i = 0; i < 12; i++) v[i] += nt[i];
       }
-      list.push({ type: "chord", root, quality: q, vec: l2normalize(v) });
+      list.push({ type: "chord", root, quality: q, vec: l2normalize(v), complexity: q.complexity });
     }
   }
   CANDIDATES = list;
+  setChordSet(activeChordSet); // refresh the active subset for the new templates
 }
 
 buildTemplates(0.6); // default harmonic influence
@@ -115,22 +148,70 @@ function computeChroma(freqDb, sampleRate, fftSize) {
   return { chroma, dominantFreq };
 }
 
+// How much extra cosine similarity a more complex chord must show, per unit of
+// `complexity`, before it's preferred over a simpler match. Realizes "prefer
+// the simpler chord on weak evidence" — a 7th must clearly out-match its triad.
+const COMPLEXITY_MARGIN = 0.03;
+
 /**
- * Find the template in {@link CANDIDATES} that best matches a chroma vector,
- * scored by cosine similarity.
+ * Find the bass note — the lowest prominent peak in the spectrum — and return
+ * its pitch class. Only the pitch class is reported, which makes this robust to
+ * octave errors: if the true bass fundamental is rolled off and its octave
+ * harmonic is the lowest strong peak, the pitch class is still correct.
+ *
+ * @param {Float32Array} freqDb - dB magnitudes from `getFloatFrequencyData`.
+ * @param {number} sampleRate - Sample rate in Hz.
+ * @param {number} fftSize - The analyser's FFT size.
+ * @returns {{pitchClass: number, freq: number} | null} The bass pitch class
+ *   (0..11) and the frequency of the detected peak, or `null` if none is found.
+ */
+function detectBass(freqDb, sampleRate, fftSize) {
+  const binHz = sampleRate / fftSize;
+  const nBins = freqDb.length;
+
+  // Reference loudness across the full musical range, for the peak threshold.
+  let maxMag = 0;
+  const refStart = Math.max(1, Math.floor(65 / binHz));
+  const refEnd = Math.min(nBins - 1, Math.ceil(2000 / binHz));
+  for (let i = refStart; i <= refEnd; i++) {
+    const m = Math.pow(10, freqDb[i] / 20);
+    if (m > maxMag) maxMag = m;
+  }
+  if (maxMag < 1e-4) return null;
+
+  const thresh = maxMag * 0.15;
+  const start = Math.max(2, Math.floor(55 / binHz));
+  const end = Math.min(nBins - 2, Math.ceil(600 / binHz));
+  for (let i = start; i <= end; i++) {
+    const m = Math.pow(10, freqDb[i] / 20);
+    if (m < thresh) continue;
+    const lo = Math.pow(10, freqDb[i - 1] / 20);
+    const hi = Math.pow(10, freqDb[i + 1] / 20);
+    if (m >= lo && m >= hi) {
+      return { pitchClass: freqToPitchClass(i * binHz), freq: i * binHz };
+    }
+  }
+  return null;
+}
+
+/**
+ * Find the {@link ACTIVE_CANDIDATES} template that best matches a chroma vector.
+ * Selection is by cosine similarity minus a complexity penalty, so simpler
+ * chords win unless a fancier one fits clearly better.
  *
  * @param {Float32Array} chroma - A 12-bin chroma vector (need not be normalized).
- * @returns {{best: object, sim: number}} The winning candidate (a `CANDIDATES`
- *   entry — a single note or a chord) and its cosine similarity `sim` in
- *   roughly 0..1, where higher means a stronger match.
+ * @returns {{best: object, sim: number}} The winning candidate (a single note or
+ *   a chord) and its raw cosine similarity `sim` (~0..1, used for confidence
+ *   gating — the penalty affects selection only, not this reported value).
  */
 function classifyChroma(chroma) {
   const c = l2normalize(chroma);
-  let best = null, bestSim = -1;
-  for (const cand of CANDIDATES) {
+  let best = null, bestScore = -Infinity, bestSim = -1;
+  for (const cand of ACTIVE_CANDIDATES) {
     let dot = 0;
     for (let i = 0; i < 12; i++) dot += c[i] * cand.vec[i];
-    if (dot > bestSim) { bestSim = dot; best = cand; }
+    const score = dot - COMPLEXITY_MARGIN * cand.complexity;
+    if (score > bestScore) { bestScore = score; bestSim = dot; best = cand; }
   }
   return { best, sim: bestSim };
 }

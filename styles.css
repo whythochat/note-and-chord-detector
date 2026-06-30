@@ -1,12 +1,33 @@
+/* Dark theme (default). Brand palette: green #41A67E, blue #1055C9,
+   deep blue #05339C, gold #E5C95F. */
 :root {
   color-scheme: dark;
-  --bg: #14161c;
-  --panel: #1d2029;
-  --accent: #6ee7b7;
-  --accent2: #7aa2f7;
+  --bg: #0f1216;
+  --panel: #1a1e27;
+  --track: #2a2f3a;
+  --text: #eef1f6;
   --dim: #8a90a2;
-  --text: #f2f4f8;
-  --warn: #f0c860;
+  --border: rgba(255, 255, 255, 0.07);
+  --accent: #41a67e;
+  --accent2: #1055c9;
+  --accent3: #05339c;
+  --warn: #e5c95f;
+  --btn-text: #ffffff;
+}
+/* Light theme overrides (a few brand colors are darkened for contrast). */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5f7fb;
+  --panel: #ffffff;
+  --track: #e3e7ef;
+  --text: #14161c;
+  --dim: #5b6376;
+  --border: rgba(0, 0, 0, 0.1);
+  --accent: #2c7d5e;
+  --accent2: #1055c9;
+  --accent3: #05339c;
+  --warn: #9a7b12;
+  --btn-text: #ffffff;
 }
 * { box-sizing: border-box; }
 body {
@@ -21,19 +42,27 @@ body {
   background: var(--bg);
   color: var(--text);
   padding: 2rem;
+  transition: background 0.2s ease, color 0.2s ease;
 }
 h1 { font-size: 1.25rem; font-weight: 600; margin: 0; color: var(--dim); }
 
 .display {
-  font-size: 6rem;
+  font-size: clamp(3.25rem, 16vw, 6rem);
   font-weight: 700;
   line-height: 1;
   letter-spacing: -0.02em;
-  min-height: 6rem;
+  min-height: clamp(3.25rem, 16vw, 6rem);
   display: flex;
   align-items: baseline;
+  justify-content: center;
+  max-width: 100%;
+  text-align: center;
 }
-.display small { font-size: 2rem; color: var(--accent); vertical-align: super; }
+.display small {
+  font-size: clamp(1.15rem, 5.5vw, 2rem);
+  color: var(--accent);
+  vertical-align: super;
+}
 .display.chord small { color: var(--accent2); }
 
 .kind-label {
@@ -47,9 +76,9 @@ h1 { font-size: 1.25rem; font-weight: 600; margin: 0; color: var(--dim); }
 /* single-note tuner */
 .tuner { display: flex; flex-direction: column; align-items: center; gap: 0.75rem; }
 .cents-bar {
-  width: 280px;
+  width: min(280px, 80vw);
   height: 8px;
-  background: var(--panel);
+  background: var(--track);
   border-radius: 99px;
   position: relative;
   overflow: hidden;
@@ -86,15 +115,27 @@ h1 { font-size: 1.25rem; font-weight: 600; margin: 0; color: var(--dim); }
 button {
   font: inherit; font-weight: 600;
   padding: 0.7rem 1.4rem; border-radius: 99px; border: none; cursor: pointer;
-  background: var(--accent); color: #062018;
+  background: linear-gradient(135deg, var(--accent2), var(--accent3));
+  color: var(--btn-text);
 }
-button.stop { background: #ef6e6e; color: #2a0808; }
+button.stop { background: #ef6e6e; color: #fff; }
+
+/* theme toggle, pinned to the corner */
+.theme-toggle {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.85rem;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
 .status { color: var(--dim); font-size: 0.85rem; min-height: 1.2rem; }
 
 /* settings panel */
 .settings {
-  width: 320px;
-  max-width: 100%;
+  width: min(320px, 100%);
   background: var(--panel);
   border-radius: 12px;
   padding: 0.5rem 1rem;
@@ -109,7 +150,18 @@ button.stop { background: #ef6e6e; color: #2a0808; }
   padding: 0.4rem 0;
 }
 .settings .control { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.6rem 0; }
-.settings .control + .control { border-top: 1px solid rgba(255, 255, 255, 0.06); }
+.settings .control-inline {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.settings .control-inline input[type="checkbox"] {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.settings .control + .control { border-top: 1px solid var(--border); }
 .settings label {
   display: flex;
   justify-content: space-between;
@@ -120,3 +172,27 @@ button.stop { background: #ef6e6e; color: #2a0808; }
 .settings label span { color: var(--accent); font-variant-numeric: tabular-nums; }
 .settings small { color: var(--dim); font-size: 0.75rem; }
 .settings input[type="range"] { width: 100%; accent-color: var(--accent); }
+.settings select {
+  width: 100%;
+  font: inherit;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  background: var(--track);
+  color: var(--text);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+/* mobile / narrow screens */
+@media (max-width: 480px) {
+  body { padding: 1.25rem 1rem; gap: 1rem; }
+  h1 { font-size: 1.05rem; max-width: 70%; text-align: center; }
+  .theme-toggle { top: 0.6rem; right: 0.6rem; padding: 0.4rem 0.7rem; font-size: 0.8rem; }
+  .readout { gap: 1.25rem; }
+  button { padding: 0.8rem 1.5rem; } /* comfortable tap target */
+}
+
+/* respect users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  body, .cents-bar .needle { transition: none; }
+}
