@@ -120,6 +120,32 @@ button {
 }
 button.stop { background: #ef6e6e; color: #fff; }
 
+/* credit banner, pinned to the top-left corner */
+.credit {
+  position: fixed;
+  top: 0.7rem;
+  left: 0.9rem;
+  z-index: 10;
+  font-size: 0.78rem;
+  color: var(--dim);
+  opacity: 0.85;
+  user-select: none;
+}
+.credit .heart {
+  display: inline-block;
+  cursor: pointer;
+  transform-origin: center;
+}
+.credit:hover .heart { animation: heartbeat 0.7s ease-in-out infinite; }
+.credit .heart.beating { animation: heartbeat 0.7s ease-in-out 3; }
+@keyframes heartbeat {
+  0%, 100% { transform: scale(1); }
+  15% { transform: scale(1.35); }
+  30% { transform: scale(1); }
+  45% { transform: scale(1.25); }
+  60% { transform: scale(1); }
+}
+
 /* theme toggle, pinned to the corner */
 .theme-toggle {
   position: fixed;
@@ -185,8 +211,9 @@ button.stop { background: #ef6e6e; color: #fff; }
 
 /* mobile / narrow screens */
 @media (max-width: 480px) {
-  body { padding: 1.25rem 1rem; gap: 1rem; }
-  h1 { font-size: 1.05rem; max-width: 70%; text-align: center; }
+  body { padding: 2.6rem 1rem 1.25rem; gap: 1rem; }
+  h1 { font-size: 1.05rem; max-width: 60%; text-align: center; }
+  .credit { font-size: 0.68rem; top: 0.6rem; left: 0.6rem; }
   .theme-toggle { top: 0.6rem; right: 0.6rem; padding: 0.4rem 0.7rem; font-size: 0.8rem; }
   .readout { gap: 1.25rem; }
   button { padding: 0.8rem 1.5rem; } /* comfortable tap target */
@@ -195,4 +222,5 @@ button.stop { background: #ef6e6e; color: #fff; }
 /* respect users who prefer reduced motion */
 @media (prefers-reduced-motion: reduce) {
   body, .cents-bar .needle { transition: none; }
+  .credit .heart { animation: none !important; }
 }

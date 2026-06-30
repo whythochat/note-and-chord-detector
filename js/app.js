@@ -341,3 +341,22 @@ function setupTheme() {
 }
 
 setupTheme();
+
+// ---------- credit heart ----------
+
+/**
+ * Make the credit heart beat on click or tap (hover is handled in CSS). The
+ * `.beating` class runs a finite animation and is cleared when it ends so it
+ * can be retriggered.
+ *
+ * @returns {void}
+ */
+function setupHeart() {
+  const heart = document.getElementById("heart");
+  if (!heart) return;
+  const beat = () => heart.classList.add("beating");
+  heart.addEventListener("click", beat);
+  heart.addEventListener("animationend", () => heart.classList.remove("beating"));
+}
+
+setupHeart();
