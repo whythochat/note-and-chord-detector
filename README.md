@@ -4,9 +4,15 @@ A browser-based audio detector that listens to your device's microphone and repo
 
 No installation, no build step, no dependencies — just static HTML, CSS, and JavaScript using the Web Audio API.
 
-## Demo
+## Live demo
 
-Open `index.html` in a modern browser (Chrome, Edge, Firefox, or Safari), click **Start listening**, allow microphone access, and play a note or a chord on any instrument.
+**▶ [whythochat.github.io/note-and-chord-detector](https://whythochat.github.io/note-and-chord-detector/)**
+
+Open it on a phone or computer, click **Start listening**, allow microphone access, and play a note or a chord on any instrument.
+
+## Running locally
+
+You can also open `index.html` in a modern browser (Chrome, Edge, Firefox, or Safari).
 
 Most browsers require a **secure context** for microphone access. Opening the file directly (`file://`) works in many desktop browsers; if yours blocks it, serve the folder locally:
 
