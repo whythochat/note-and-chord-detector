@@ -21,28 +21,64 @@
 
         <h1>Guy with Perfect Pitch</h1>
 
-        <div class="display" id="display">—</div>
-        <div class="kind-label" id="kindLabel"></div>
-
-        <!-- single-note tuner -->
-        <div class="tuner" id="tuner">
-            <div class="cents-bar">
-                <div class="center"></div>
-                <div class="needle" id="needle"></div>
-            </div>
-            <div class="readout">
-                <span>freq <b id="freq">—</b> Hz</span>
-                <span>cents <b id="cents">—</b></span>
-            </div>
+        <div class="tabs" role="tablist">
+            <button class="tab active" id="tabLive" type="button">Live</button>
+            <button class="tab" id="tabRecord" type="button">Record</button>
         </div>
 
-        <!-- chord note list -->
-        <div class="notes hidden" id="notes"></div>
+        <!-- LIVE MODE -->
+        <section id="livePanel" class="panel">
+            <div class="display" id="display">—</div>
+            <div class="kind-label" id="kindLabel"></div>
 
-        <button id="toggle">Start listening</button>
-        <div class="status" id="status">
-            Click start and allow microphone access.
-        </div>
+            <!-- single-note tuner -->
+            <div class="tuner" id="tuner">
+                <div class="cents-bar">
+                    <div class="center"></div>
+                    <div class="needle" id="needle"></div>
+                </div>
+                <div class="readout">
+                    <span>freq <b id="freq">—</b> Hz</span>
+                    <span>cents <b id="cents">—</b></span>
+                </div>
+            </div>
+
+            <!-- chord note list -->
+            <div class="notes hidden" id="notes"></div>
+
+            <button id="toggle">Start listening</button>
+            <div class="status" id="status">
+                Click start and allow microphone access.
+            </div>
+        </section>
+
+        <!-- RECORD MODE -->
+        <section id="recordPanel" class="panel hidden">
+            <div class="rec-controls">
+                <button id="recBtn" class="rec-btn" type="button">● Record</button>
+                <span id="recStatus" class="status">Idle — press record.</span>
+            </div>
+
+            <div id="player" class="player hidden">
+                <div class="transport">
+                    <button id="playBtn" type="button">▶ Play</button>
+                    <span id="timeLabel" class="time">0:00 / 0:00</span>
+                </div>
+
+                <div id="timeline" class="timeline">
+                    <div id="timelineSegments" class="timeline-segments"></div>
+                    <div id="cursor" class="cursor"></div>
+                </div>
+
+                <div id="nowChord" class="now-chord">—</div>
+
+                <div class="rec-actions">
+                    <button id="reanalyzeBtn" type="button">Re-analyze</button>
+                    <button id="downloadAudioBtn" type="button">Download audio</button>
+                    <button id="downloadMidiBtn" type="button">Export MIDI</button>
+                </div>
+            </div>
+        </section>
 
         <details class="settings">
             <summary>Settings</summary>
@@ -115,6 +151,10 @@
         <script src="js/music.js"></script>
         <script src="js/pitch.js"></script>
         <script src="js/chord.js"></script>
+        <script src="js/fft.js"></script>
+        <script src="js/analysis.js"></script>
+        <script src="js/midi.js"></script>
         <script src="js/app.js"></script>
+        <script src="js/record.js"></script>
     </body>
 </html>

@@ -210,6 +210,91 @@ button.stop { background: #ef6e6e; color: #fff; }
   cursor: pointer;
 }
 
+/* tabs + panels */
+.panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  width: 100%;
+}
+.tabs { display: flex; gap: 0.4rem; background: var(--panel); padding: 0.3rem; border-radius: 99px; }
+.tab {
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: 0.45rem 1.1rem;
+  border: none;
+  border-radius: 99px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--dim);
+}
+.tab.active {
+  background: linear-gradient(135deg, var(--accent2), var(--accent3));
+  color: var(--btn-text);
+}
+
+/* record mode */
+.rec-controls { display: flex; flex-direction: column; align-items: center; gap: 0.6rem; }
+.rec-btn { background: linear-gradient(135deg, #ef6e6e, #c94040); }
+.rec-btn.recording { animation: recpulse 1.1s ease-in-out infinite; }
+@keyframes recpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+.player { display: flex; flex-direction: column; align-items: center; gap: 1rem; width: min(680px, 92vw); }
+.transport { display: flex; align-items: center; gap: 1rem; }
+.transport .time { color: var(--dim); font-variant-numeric: tabular-nums; font-size: 0.9rem; }
+
+.timeline {
+  position: relative;
+  width: 100%;
+  height: 72px;
+  background: var(--track);
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  touch-action: none;
+}
+.timeline-segments { position: absolute; inset: 0; }
+.seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--text);
+  white-space: nowrap;
+  padding: 0 2px;
+}
+.seg span { overflow: hidden; text-overflow: ellipsis; }
+.seg-chord { background: color-mix(in srgb, var(--accent2) 28%, transparent); }
+.seg-note { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+.seg-none { background: transparent; color: var(--dim); }
+.seg.active { outline: 2px solid var(--warn); outline-offset: -2px; }
+.cursor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--warn);
+  left: 0;
+  pointer-events: none;
+}
+.now-chord { font-size: 2rem; font-weight: 700; min-height: 2rem; }
+.rec-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; }
+.rec-actions button {
+  font-size: 0.85rem;
+  padding: 0.5rem 0.9rem;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
 /* mobile / narrow screens */
 @media (max-width: 480px) {
   body { padding: 2.6rem 1rem 1.25rem; gap: 1rem; }

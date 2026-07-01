@@ -1,6 +1,9 @@
 # Note & Chord Detector
 
-A browser-based audio detector that listens to your device's microphone and reports, in real time, what it hears: a **single note** (with frequency, octave, and cents offset) or a **chord** (with its root and quality). Detection switches between the two automatically.
+A browser-based audio detector that listens to your device's microphone and reports what it hears: a **single note** (with frequency, octave, and cents offset) or a **chord** (with its root and quality). It has two modes:
+
+- **Live** — real-time detection that switches between note and chord automatically.
+- **Record** — capture audio, analyze it offline for higher accuracy, and scrub an interactive timeline of the detected chords/notes.
 
 No installation, no build step, no dependencies — just static HTML, CSS, and JavaScript using the Web Audio API.
 
@@ -42,6 +45,21 @@ A collapsible **Settings** panel exposes the detector's tuning knobs live, so yo
 
 A **dark / light theme toggle** (top-right) remembers your choice and defaults to your system preference.
 
+## Record mode
+
+The **Record** tab captures audio until you stop, then analyzes the whole recording offline — which allows more accuracy than the realtime path:
+
+- **Larger FFT windows** for finer frequency resolution than realtime frames allow.
+- **Onset detection** via spectral flux to place chord/note boundaries.
+- **Median aggregation** of each segment's chroma, rejecting transients, before classifying the segment as a whole.
+
+The result is an interactive **timeline** of labeled chord/note blocks. Press play (or click/scrub the track) and a cursor follows along, highlighting the current segment. From there you can:
+
+- **Play / scrub** the recording.
+- **Download audio** of the take.
+- **Export MIDI** — the detected notes and chords as a standard `.mid` file.
+- **Re-analyze** the same recording after changing detection settings.
+
 ## Current scope
 
 A proof of concept that detects **single notes** and a range of chords:
@@ -58,26 +76,31 @@ In addition to the chroma matching above, the bass note is found separately as t
 
 ## Roadmap
 
-- **Stability** — temporal smoothing across frames to suppress flicker on note attacks and mode switches.
-- **Visualization** — a live frequency spectrum / spectrogram view.
+- **Beat/onset refinement** — snap boundaries to detected onsets even more tightly, and tempo/beat tracking.
 - **Reference & range tuning** — adjustable reference pitch (e.g. 432 Hz) and instrument-specific frequency ranges.
-- **Polish** — mobile-friendly layout, selectable input device, and a session history of detected notes and chords.
+- **Ninth/eleventh/thirteenth chords** and richer voicing labels.
+- **Polish** — selectable input device, and a session history of detected notes and chords.
 
 ## Project layout
 
 - `index.html` — markup
 - `styles.css` — styling
 - `js/theme.js` — dark/light theme handling (applied before paint)
-- `js/music.js` — note/pitch-class helpers and chord templates
+- `js/music.js` — note/pitch-class helpers and chord definitions
 - `js/pitch.js` — single-note detection (McLeod Pitch Method)
-- `js/chord.js` — spectral analysis and triad matching
-- `js/app.js` — microphone capture, per-frame analysis, and rendering
+- `js/chord.js` — chroma + harmonic-template chord/note classification
+- `js/app.js` — live mode: microphone capture, per-frame analysis, and rendering
+- `js/fft.js` — radix-2 FFT for offline analysis
+- `js/analysis.js` — offline pipeline: framing, onsets, segmentation, classification
+- `js/midi.js` — MIDI file export
+- `js/record.js` — record mode: recording, timeline, playback, downloads
 
 ## Tech
 
-- Web Audio API (`getUserMedia`, `AnalyserNode`)
+- Web Audio API (`getUserMedia`, `AnalyserNode`, `decodeAudioData`), `MediaRecorder`
 - McLeod Pitch Method for fundamental-frequency estimation
-- FFT peak-picking with harmonic suppression and triad-template matching for chords
+- Chroma + harmonic-template matching for chords; spectral-flux onset detection offline
+- Standard MIDI File export
 - Vanilla JavaScript, HTML, and CSS — no build tooling
 
 ## License
