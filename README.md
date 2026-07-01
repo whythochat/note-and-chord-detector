@@ -53,12 +53,19 @@ The **Record** tab captures audio until you stop, then analyzes the whole record
 - **Onset detection** via spectral flux to place chord/note boundaries.
 - **Median aggregation** of each segment's chroma, rejecting transients, before classifying the segment as a whole.
 
-The result is an interactive **timeline** of labeled chord/note blocks at a fixed time scale: it fills the screen for short takes and **scrolls horizontally** for longer ones. Each block shows the chord name with its tones beneath (narrow blocks rotate their label and reveal detail on hover); silent stretches render as a **musical rest** with **barlines** marking each break. Press play (or click/scrub the track) and a cursor follows along, highlighting the current segment. From there you can:
+It shows **two lanes on one timeline**:
+
+- **Chords** — the harmony, low-frequency-weighted so a loud melody note doesn't skew the chord.
+- **Melody** — the top voice, estimated per frame as the predominant (loudest) pitch in the melody register, then smoothed into notes. This is a heuristic sketch, not full polyphonic transcription: it shines when there's a clear lead over accompaniment and struggles in dense textures or when the melody sits below the harmony.
+
+The timeline uses a fixed time scale: it fills the screen for short takes and **scrolls horizontally** for longer ones. Chord blocks show the name with tones beneath (narrow blocks rotate their label and reveal detail on hover); silent stretches render as a **musical rest** with **barlines** marking each break. Press play (or click/scrub the track) and a cursor follows both lanes, highlighting the current chord and melody note. From there you can:
 
 - **Play / scrub** the recording.
 - **Download audio** of the take.
-- **Export MIDI** — the detected notes and chords as a standard `.mid` file.
+- **Export MIDI** — a two-track (melody + chords) standard `.mid` file.
 - **Re-analyze** the same recording after changing detection settings.
+
+A separate **Recording analysis** panel adds granular offline controls: analysis window size, frame overlap, onset sensitivity, minimum chord/melody lengths, and melody detection on/off with its own sensitivity.
 
 ## Current scope
 

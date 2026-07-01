@@ -4,9 +4,21 @@
 // classifies each segment with the shared template matcher. Returns labeled
 // time segments for the timeline and MIDI export.
 
-const ANALYSIS_FFT = 8192;   // large window -> fine frequency resolution
-const ANALYSIS_HOP = 2048;   // 75% overlap
-const MIN_SEGMENT_SEC = 0.14; // merge anything shorter into a neighbor
+// Live-adjustable knobs for offline (record-mode) analysis. Wired to the
+// "Recording analysis" settings and re-applied on every re-analyze.
+const recSettings = {
+  fftSize: 8192,          // analysis window (power of two): 4096 | 8192 | 16384
+  overlap: 0.75,          // frame overlap; hop = fftSize * (1 - overlap)
+  onsetSensitivity: 0.12, // spectral-flux threshold above the local mean
+  minSegment: 0.14,       // shortest chord segment (s) before it's absorbed
+  detectMelody: true,     // extract a top-voice melody lane
+  melodyMinLevel: 0.12,   // min peak strength (vs. loudest bin) for a melody note
+  melodySmooth: 2,        // median-filter half-window (frames) for the melody
+  melodyMinSeg: 0.09,     // shortest melody note (s) before it's absorbed
+};
+
+const MELODY_MIN_HZ = 160;  // ~E3
+const MELODY_MAX_HZ = 1300; // ~E6
 
 /**
  * Fold a linear magnitude spectrum into a 12-bin chroma vector.
@@ -25,9 +37,12 @@ function chromaFromMagnitude(mag, sampleRate, fftSize) {
   const chroma = new Float32Array(12);
   if (maxMag <= 0) return chroma;
   const floor = maxMag * 0.02;
-  for (let i = start; i <= end; i++) {
+  const knee = 350; // de-emphasize high frequencies so the harmony (which sits
+  for (let i = start; i <= end; i++) {   // lower) outweighs a loud melody note
     if (mag[i] < floor) continue;
-    chroma[freqToPitchClass(i * binHz)] += mag[i];
+    const f = i * binHz;
+    const w = f <= knee ? 1 : (knee / f) * (knee / f);
+    chroma[freqToPitchClass(f)] += mag[i] * w;
   }
   return chroma;
 }
@@ -69,15 +84,52 @@ function dominantFreq(mag, sampleRate, fftSize) {
 }
 
 /**
+ * Estimate the melody note as the "top voice": the highest fundamental peak in
+ * the melody register. Peaks are found, then harmonics of lower peaks are
+ * suppressed so the surviving highest peak is a real fundamental, not an
+ * overtone of the harmony below it.
+ *
+ * @param {Float32Array} mag - Linear magnitude spectrum.
+ * @param {number} sampleRate - Sample rate in Hz.
+ * @param {number} fftSize - FFT window size.
+ * @returns {number} MIDI note number of the melody, or -1 if none is confident.
+ */
+function melodyPitch(mag, sampleRate, fftSize) {
+  const binHz = sampleRate / fftSize;
+  let maxMag = 0;
+  for (let i = 1; i < mag.length; i++) if (mag[i] > maxMag) maxMag = mag[i];
+  if (maxMag <= 0) return -1;
+
+  const thresh = maxMag * recSettings.melodyMinLevel;
+  const start = Math.max(2, Math.floor(MELODY_MIN_HZ / binHz));
+  const end = Math.min(mag.length - 2, Math.ceil(MELODY_MAX_HZ / binHz));
+
+  // Predominant-F0: the loudest peak in the melody register. A note that
+  // coincides with a chord harmonic can't be told apart from a single mic
+  // channel, so we take the most salient upper voice rather than the highest.
+  let bestFreq = -1, bestMag = thresh;
+  for (let i = start; i <= end; i++) {
+    if (mag[i] >= bestMag && mag[i] >= mag[i - 1] && mag[i] >= mag[i + 1]) {
+      const a = mag[i - 1], b = mag[i], c = mag[i + 1];
+      const denom = a - 2 * b + c;
+      const shift = denom !== 0 ? (0.5 * (a - c)) / denom : 0;
+      bestMag = mag[i];
+      bestFreq = (i + shift) * binHz;
+    }
+  }
+  return bestFreq > 0 ? Math.round(freqToMidi(bestFreq)) : -1;
+}
+
+/**
  * Compute per-frame features across the whole signal.
  *
  * @param {Float32Array} data - Mono PCM samples.
  * @param {number} sampleRate - Sample rate in Hz.
- * @returns {Array<{time:number, chroma:Float32Array, bassPc:number, domFreq:number, flux:number, energy:number}>}
+ * @returns {Array<object>} Per-frame features (time, chroma, bass, melody, flux…).
  */
 function computeFrames(data, sampleRate) {
-  const N = ANALYSIS_FFT;
-  const hop = ANALYSIS_HOP;
+  const N = recSettings.fftSize;
+  const hop = Math.max(256, Math.round(N * (1 - recSettings.overlap)));
   const win = hannWindow(N);
   const frames = [];
   const buf = new Float32Array(N);
@@ -107,6 +159,7 @@ function computeFrames(data, sampleRate) {
       chroma: chromaFromMagnitude(mag, sampleRate, N),
       bassPc: bass ? bass.pitchClass : -1,
       domFreq: dominantFreq(mag, sampleRate, N),
+      melodyMidi: recSettings.detectMelody ? melodyPitch(mag, sampleRate, N) : -1,
       flux,
       energy: Math.sqrt(energy / N),
     });
@@ -129,7 +182,7 @@ function detectOnsets(frames) {
 
   const norm = frames.map((f) => f.flux / mx);
   const onsets = [];
-  const W = 8, delta = 0.12, minGap = 4;
+  const W = 8, delta = recSettings.onsetSensitivity, minGap = 4;
   let last = -Infinity;
   for (let i = 1; i < n - 1; i++) {
     let sum = 0, count = 0;
@@ -234,11 +287,66 @@ function segmentKey(seg) {
 }
 
 /**
+ * Median-filter an integer sequence (values may include -1 for "none"),
+ * smoothing away single-frame melody jumps and octave slips.
+ *
+ * @param {number[]} arr - The sequence.
+ * @param {number} half - Half-window size in samples.
+ * @returns {number[]} The filtered sequence.
+ */
+function medianFilterInt(arr, half) {
+  if (half <= 0) return arr.slice();
+  const out = new Array(arr.length);
+  const win = [];
+  for (let i = 0; i < arr.length; i++) {
+    win.length = 0;
+    for (let j = Math.max(0, i - half); j <= Math.min(arr.length - 1, i + half); j++) win.push(arr[j]);
+    win.sort((a, b) => a - b);
+    out[i] = win[win.length >> 1];
+  }
+  return out;
+}
+
+/**
+ * Build melody note segments from per-frame top-voice pitches: median-smooth,
+ * run-length encode into notes (with -1 as rests), then absorb tiny segments.
+ *
+ * @param {Array<{time:number, melodyMidi:number}>} frames
+ * @param {number} duration - Recording length in seconds.
+ * @returns {Array<object>} Melody segments with start/end and note display/MIDI.
+ */
+function segmentMelody(frames, duration) {
+  const smooth = medianFilterInt(frames.map((f) => f.melodyMidi), recSettings.melodySmooth);
+
+  let runs = [];
+  let startIdx = 0;
+  for (let i = 1; i <= smooth.length; i++) {
+    if (i === smooth.length || smooth[i] !== smooth[startIdx]) {
+      const midi = smooth[startIdx];
+      const start = frames[startIdx].time;
+      const end = i < frames.length ? frames[i].time : duration;
+      if (midi < 0) {
+        runs.push({ start, end, type: "none", midi: [], key: "none" });
+      } else {
+        const pc = ((midi % 12) + 12) % 12;
+        const name = NOTE_NAMES[pc] + (Math.floor(midi / 12) - 1);
+        runs.push({ start, end, type: "note", display: name, sub: "melody " + name, midi: [midi], key: "m:" + midi });
+      }
+      startIdx = i;
+    }
+  }
+
+  runs = mergeAdjacent(runs);
+  runs = absorbShort(runs, recSettings.melodyMinSeg);
+  return mergeAdjacent(runs);
+}
+
+/**
  * Full offline analysis of a decoded recording.
  *
  * @param {AudioBuffer} audioBuffer - The decoded recording.
- * @returns {{duration:number, segments:Array<object>}} Labeled segments with
- *   `start`/`end` times (seconds) plus display/MIDI data.
+ * @returns {{duration:number, segments:Array<object>, melody:Array<object>}}
+ *   The chord/note `segments` and (if enabled) the top-voice `melody` segments.
  */
 function analyzeRecording(audioBuffer) {
   const sr = audioBuffer.sampleRate;
@@ -246,7 +354,7 @@ function analyzeRecording(audioBuffer) {
   const duration = audioBuffer.duration;
 
   const frames = computeFrames(data, sr);
-  if (frames.length === 0) return { duration, segments: [] };
+  if (frames.length === 0) return { duration, segments: [], melody: [] };
 
   const bounds = [0, ...detectOnsets(frames), frames.length];
   const uniq = [...new Set(bounds)].sort((a, b) => a - b);
@@ -270,7 +378,8 @@ function analyzeRecording(audioBuffer) {
   segments = absorbShort(segments);
   segments = mergeAdjacent(segments);
 
-  return { duration, segments };
+  const melody = recSettings.detectMelody ? segmentMelody(frames, duration) : [];
+  return { duration, segments, melody };
 }
 
 /** Merge consecutive segments that share a label key. */
@@ -285,11 +394,11 @@ function mergeAdjacent(segments) {
 }
 
 /** Merge any sub-threshold segment into the neighbor it best belongs to. */
-function absorbShort(segments) {
+function absorbShort(segments, min = recSettings.minSegment) {
   if (segments.length <= 1) return segments;
   const out = segments.map((s) => ({ ...s }));
   for (let i = 0; i < out.length; i++) {
-    if (out[i].end - out[i].start >= MIN_SEGMENT_SEC) continue;
+    if (out[i].end - out[i].start >= min) continue;
     const prev = out[i - 1], next = out[i + 1];
     if (prev) prev.end = out[i].end;
     else if (next) next.start = out[i].start;

@@ -15,9 +15,12 @@ const rec = {
     playBtn: document.getElementById("playBtn"),
     timeline: document.getElementById("timeline"),
     track: document.getElementById("timelineTrack"),
+    melodyLane: document.getElementById("melodyLane"),
     segmentsEl: document.getElementById("timelineSegments"),
     barsEl: document.getElementById("timelineBars"),
     cursor: document.getElementById("cursor"),
+    laneLabels: document.getElementById("laneLabels"),
+    nowMelody: document.getElementById("nowMelody"),
     nowChord: document.getElementById("nowChord"),
     timeLabel: document.getElementById("timeLabel"),
     reanalyzeBtn: document.getElementById("reanalyzeBtn"),
@@ -33,6 +36,7 @@ const rec = {
   audio: null,      // HTMLAudioElement for playback
   audioBuffer: null, // decoded PCM for analysis
   segments: [],
+  melody: [],
   duration: 0,
   offlineCtx: null,
   playRaf: 0,
@@ -150,11 +154,12 @@ async function onRecordingStopped() {
 /** Run (or re-run) offline analysis on the decoded buffer and render it. */
 function runAnalysis() {
   if (!rec.audioBuffer) return;
-  const { duration, segments } = analyzeRecording(rec.audioBuffer);
+  const { duration, segments, melody } = analyzeRecording(rec.audioBuffer);
   rec.duration = duration;
   rec.segments = segments;
+  rec.melody = melody || [];
   renderTimeline();
-  updatePlayhead(0);
+  updatePlayhead(rec.audio ? rec.audio.currentTime : 0);
 }
 
 // ---------- timeline ----------
@@ -178,6 +183,12 @@ function renderTimeline() {
   rec.pxPerSec = Math.max(PX_PER_SEC, viewport / total);
   rec.trackWidth = total * rec.pxPerSec;
   rec.els.track.style.width = rec.trackWidth + "px";
+
+  // Show/hide the melody lane depending on whether any melody was found.
+  const hasMelody = rec.melody.some((m) => m.type === "note");
+  rec.els.timeline.classList.toggle("no-melody", !hasMelody);
+  if (rec.els.laneLabels) rec.els.laneLabels.classList.toggle("no-melody", !hasMelody);
+  renderMelody();
 
   rec.els.segmentsEl.innerHTML = rec.segments.map((seg, i) => {
     const left = seg.start * rec.pxPerSec;
@@ -214,6 +225,19 @@ function renderBarlines() {
   rec.els.barsEl.innerHTML = bars.join("");
 }
 
+/** Draw the melody note cells in the top lane (rests left blank). */
+function renderMelody() {
+  rec.els.melodyLane.innerHTML = rec.melody.map((seg, i) => {
+    if (seg.type !== "note") return "";
+    const left = seg.start * rec.pxPerSec;
+    const width = Math.max(1, (seg.end - seg.start) * rec.pxPerSec);
+    const sizeCls = width < 18 ? " tiny" : width < 40 ? " narrow" : "";
+    return `<div class="mcell${sizeCls}" data-i="${i}" ` +
+      `style="left:${left}px;width:${width}px" title="${esc(seg.display)}">` +
+      `<span>${esc(seg.display)}</span></div>`;
+  }).join("");
+}
+
 /**
  * Move the cursor and update the "now playing" label for a given time.
  *
@@ -237,6 +261,20 @@ function updatePlayhead(t, autoScroll) {
   }
   if (current && current.type === "none") rec.els.nowChord.innerHTML = REST_SVG;
   else rec.els.nowChord.textContent = current ? current.display : "—";
+
+  // Melody lane: highlight the active note cell (cells map to melody indices).
+  let melNow = null;
+  const mcells = rec.els.melodyLane.children;
+  let ci = 0;
+  for (let i = 0; i < rec.melody.length; i++) {
+    const seg = rec.melody[i];
+    if (seg.type !== "note") continue;
+    const active = t >= seg.start && t < seg.end;
+    if (mcells[ci]) mcells[ci].classList.toggle("active", active);
+    if (active) melNow = seg;
+    ci++;
+  }
+  if (rec.els.nowMelody) rec.els.nowMelody.textContent = melNow ? melNow.display : "";
 
   if (autoScroll) {
     const cont = rec.els.timeline;
@@ -348,8 +386,67 @@ function setupRecordMode() {
     if (rec.audioBlob) downloadBlob(rec.audioBlob, "recording.webm");
   });
   rec.els.downloadMidiBtn.addEventListener("click", () => {
-    if (rec.segments.length) downloadBlob(segmentsToMidi(rec.segments), "chords.mid");
+    if (!rec.segments.length && !rec.melody.length) return;
+    const midi = tracksToMidi([
+      { name: "Melody", segments: rec.melody },
+      { name: "Chords", segments: rec.segments },
+    ]);
+    downloadBlob(midi, "transcription.mid");
   });
+
+  setupRecordSettings();
+}
+
+/** Re-run offline analysis if a recording is loaded (after a setting changes). */
+function reanalyzeIfReady() {
+  if (!rec.audioBuffer) return;
+  rec.els.recStatus.textContent = "Re-analyzing…";
+  runAnalysis();
+  rec.els.recStatus.textContent = "Re-analyzed with current settings.";
+}
+
+/**
+ * Wire the granular "Recording analysis" controls to `recSettings`. Value labels
+ * update live while dragging; the (heavier) re-analysis runs on release/change.
+ *
+ * @returns {void}
+ */
+function setupRecordSettings() {
+  const slider = (id, key, fmt) => {
+    const input = document.getElementById(id);
+    if (!input) return;
+    const out = document.getElementById(id + "Val");
+    input.value = recSettings[key];
+    if (out) out.textContent = fmt(recSettings[key]);
+    input.addEventListener("input", () => {
+      recSettings[key] = parseFloat(input.value);
+      if (out) out.textContent = fmt(recSettings[key]);
+    });
+    input.addEventListener("change", reanalyzeIfReady);
+  };
+  slider("recOverlap", "overlap", (v) => Math.round(v * 100) + "%");
+  slider("recOnset", "onsetSensitivity", (v) => v.toFixed(2));
+  slider("recMinSeg", "minSegment", (v) => v.toFixed(2) + "s");
+  slider("recMelodyLevel", "melodyMinLevel", (v) => v.toFixed(2));
+  slider("recMelodyMinSeg", "melodyMinSeg", (v) => v.toFixed(2) + "s");
+
+  const fftEl = document.getElementById("recFft");
+  if (fftEl) {
+    fftEl.value = String(recSettings.fftSize);
+    fftEl.addEventListener("change", () => {
+      recSettings.fftSize = parseInt(fftEl.value, 10);
+      reanalyzeIfReady();
+    });
+  }
+
+  const melEl = document.getElementById("recMelody");
+  if (melEl) {
+    melEl.checked = recSettings.detectMelody;
+    melEl.addEventListener("change", () => {
+      recSettings.detectMelody = melEl.checked;
+      reanalyzeIfReady();
+    });
+  }
 }
 
 setupRecordMode();
