@@ -17,21 +17,24 @@ let audioCtx, analyser, source, stream, rafId;
 let running = false;
 let timeBuf, freqBuf;
 
-// Live-adjustable tuning knobs (wired to the Settings sliders).
+// Live-adjustable tuning knobs (wired to the Settings sliders). Defaults chosen
+// to be forgiving for a general user; the sliders tune from there.
 const settings = {
-  confidence: 0.6,        // min cosine similarity to accept a frame
-  history: 6,             // frames of majority-vote smoothing
-  harmonicDecay: 0.6,     // overtone weight baked into templates
-  spectrumSmoothing: 0.8, // AnalyserNode smoothingTimeConstant
-  chordSet: "sevenths",   // which chord tiers can be detected
-  inversions: true,       // detect bass note / slash chords
+  silenceThreshold: 0.015, // RMS below this = silence (show a rest)
+  confidence: 0.6,         // min cosine similarity to accept a frame
+  smoothMs: 130,           // majority-vote smoothing window, milliseconds
+  harmonicDecay: 0.6,      // overtone weight baked into templates
+  spectrumSmoothing: 0.85, // AnalyserNode smoothingTimeConstant
+  chordSet: "triads",      // which chord tiers can be detected
+  inversions: false,       // detect bass note / slash chords
 };
 
 // ---------- main analysis pass ----------
 
 /**
  * @typedef {Object} Detection
- * @property {"silent"|"note"|"chord"} kind - What was detected this frame.
+ * @property {"silent"|"rest"|"note"|"chord"} kind - What was detected this frame
+ *   ("rest" = gated silence/no music; "silent" = sound present but no match).
  * @property {string} [name] - Note name (when kind === "note"), e.g. "C#".
  * @property {number|string} [octave] - Note octave (when kind === "note");
  *   empty string when the octave is unknown.
@@ -56,6 +59,13 @@ const settings = {
 function analyze() {
   analyser.getFloatTimeDomainData(timeBuf);
   const slice = timeBuf.subarray(timeBuf.length - 2048); // smaller window for MPM
+
+  // Noise gate: below the silence threshold there's no music -> a rest.
+  let rms = 0;
+  for (let i = 0; i < slice.length; i++) rms += slice[i] * slice[i];
+  rms = Math.sqrt(rms / slice.length);
+  if (rms < settings.silenceThreshold) return { kind: "rest" };
+
   const [mpmFreq, clarity] = detectPitch(slice, audioCtx.sampleRate);
 
   analyser.getFloatFrequencyData(freqBuf);
@@ -106,26 +116,27 @@ const history = [];
  * chord maps to one key regardless of small tuning fluctuations.
  *
  * @param {Detection} r - A detection from {@link analyze}.
- * @returns {string} The grouping key, e.g. "silent", "note:C#", "chord:0:major".
+ * @returns {string} The grouping key, e.g. "rest", "note:C#", "chord:0:major".
  */
 function resultKey(r) {
-  if (!r || r.kind === "silent") return "silent";
+  if (!r || r.kind === "silent" || r.kind === "rest") return r ? r.kind : "silent";
   if (r.kind === "note") return "note:" + r.name;
   return "chord:" + r.root + ":" + r.quality.name + ":" + (r.bass ?? "");
 }
 
 /**
- * Smooth detections over time by majority vote across the last `settings.history`
- * frames, suppressing flicker between near-relatives (e.g. C major vs A minor,
- * which share two notes). Mutates the module-level `history` buffer.
+ * Smooth detections over time by majority vote across the last `settings.smoothMs`
+ * milliseconds, suppressing flicker between near-relatives (e.g. C major vs A
+ * minor, which share two notes). Mutates the module-level `history` buffer.
  *
  * @param {Detection} r - The current frame's detection.
  * @returns {Detection} The most recent detection whose key wins the vote (so
  *   live fields like cents/frequency stay fresh).
  */
 function stabilize(r) {
-  history.push({ key: resultKey(r), result: r });
-  while (history.length > settings.history) history.shift();
+  const now = performance.now();
+  history.push({ key: resultKey(r), result: r, t: now });
+  while (history.length && now - history[0].t > settings.smoothMs) history.shift();
 
   const counts = {};
   for (const h of history) counts[h.key] = (counts[h.key] || 0) + 1;
@@ -161,10 +172,11 @@ function showTuner(show) {
  * @returns {void}
  */
 function render(r) {
-  if (!r || r.kind === "silent") {
-    els.display.textContent = "—";
+  if (!r || r.kind === "silent" || r.kind === "rest") {
+    showTuner(true);
     els.display.classList.remove("chord");
-    els.kindLabel.textContent = "";
+    els.display.innerHTML = r && r.kind === "rest" ? REST_SVG : "—";
+    els.kindLabel.textContent = r && r.kind === "rest" ? "silence" : "";
     els.freq.textContent = "—";
     els.cents.textContent = "—";
     els.notes.innerHTML = "";
@@ -294,8 +306,9 @@ function setupControls() {
     });
   };
 
+  bind("silenceThreshold", "silenceThreshold", (v) => v.toFixed(3));
   bind("confidence", "confidence", (v) => v.toFixed(2));
-  bind("history", "history", (v) => v + (v === 1 ? " frame" : " frames"));
+  bind("smoothMs", "smoothMs", (v) => Math.round(v) + " ms");
   bind("harmonicDecay", "harmonicDecay", (v) => v.toFixed(2), (v) => buildTemplates(v));
   bind("spectrumSmoothing", "spectrumSmoothing", (v) => v.toFixed(2), (v) => {
     if (analyser) analyser.smoothingTimeConstant = v;

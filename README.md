@@ -38,8 +38,9 @@ A collapsible **Settings** panel exposes the detector's tuning knobs live, so yo
 
 - **Chord set** — limit detection to triads only, triads + 7ths, or all chords (including sus), to cut false matches when you only play simpler chords.
 - **Detect inversions** — toggle bass-note detection and slash-chord naming on or off.
+- **Silence threshold** — a noise gate: below this loudness there's no music, so the readout shows a **rest** instead of guessing a chord. Raise it if room noise leaks through.
 - **Confidence** — minimum match similarity required before a result is shown.
-- **Smoothing** — how many frames the majority-vote stabilizer averages over (steadier vs. more responsive).
+- **Smoothing** — the majority-vote window in **milliseconds** (steadier vs. more responsive).
 - **Harmonic influence** — how much overtone energy the templates assume, which shifts the balance between calling something a single note vs. a chord.
 - **Spectrum smoothing** — averaging applied to the FFT between frames.
 
@@ -65,7 +66,7 @@ The timeline uses a fixed time scale: it fills the screen for short takes and **
 - **Export MIDI** — a two-track (melody + chords) standard `.mid` file.
 - **Re-analyze** the same recording after changing detection settings.
 
-A separate **Recording analysis** panel adds granular offline controls: analysis window size, frame overlap, onset sensitivity, minimum chord/melody lengths, and melody detection on/off with its own sensitivity.
+A separate **Recording analysis** panel adds granular offline controls: analysis window size, frame overlap, onset sensitivity, minimum chord/melody lengths, melody detection (on/off, sensitivity, smoothing), and **tempo** — set a BPM and enable **Snap to beats** to align chord/note boundaries to the beat grid and draw barlines (assumes the take starts on beat 1). A silent stretch anywhere is gated to a rest by the shared silence threshold.
 
 ## Current scope
 

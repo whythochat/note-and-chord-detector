@@ -2,6 +2,14 @@
 
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
+// Inline SVG rest (a half-rest: a filled block on a staff line). Drawn rather
+// than a Unicode music glyph, which many fonts don't render. Shown wherever the
+// readout is silent (no music playing).
+const REST_SVG =
+  '<svg class="rest-icon" viewBox="0 0 32 24" role="img" aria-label="rest">' +
+  '<line x1="6" y1="12" x2="26" y2="12" stroke="currentColor" stroke-width="1.6"/>' +
+  '<rect x="12" y="7.5" width="8" height="4.5" fill="currentColor"/></svg>';
+
 // Chord qualities, each defined by semitone offsets from the root.
 //   symbol     - compact label for the display (e.g. "m7")
 //   intervals  - chord tones as semitones above the root

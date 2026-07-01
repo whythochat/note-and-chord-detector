@@ -9,12 +9,15 @@
 const recSettings = {
   fftSize: 8192,          // analysis window (power of two): 4096 | 8192 | 16384
   overlap: 0.75,          // frame overlap; hop = fftSize * (1 - overlap)
-  onsetSensitivity: 0.12, // spectral-flux threshold above the local mean
-  minSegment: 0.14,       // shortest chord segment (s) before it's absorbed
+  onsetSensitivity: 0.15, // spectral-flux threshold above the local mean
+  minSegment: 0.2,        // shortest chord segment (s) before it's absorbed
   detectMelody: true,     // extract a top-voice melody lane
-  melodyMinLevel: 0.12,   // min peak strength (vs. loudest bin) for a melody note
-  melodySmooth: 2,        // median-filter half-window (frames) for the melody
-  melodyMinSeg: 0.09,     // shortest melody note (s) before it's absorbed
+  melodyMinLevel: 0.16,   // min peak strength (vs. loudest bin) for a melody note
+  melodySmoothMs: 90,     // median-filter window (ms) for the melody
+  melodyMinSeg: 0.12,     // shortest melody note (s) before it's absorbed
+  bpm: 120,               // tempo for beat snapping / bar grid
+  snapToBeats: false,     // snap segment boundaries to the beat grid
+  beatsPerBar: 4,         // beats per bar (for the grid)
 };
 
 const MELODY_MIN_HZ = 160;  // ~E3
@@ -136,12 +139,15 @@ function computeFrames(data, sampleRate) {
   let prevMag = null;
 
   for (let start = 0; start + N <= data.length; start += hop) {
-    let energy = 0;
+    let raw = 0, energy = 0;
     for (let i = 0; i < N; i++) {
-      const s = data[start + i] * win[i];
+      const x = data[start + i];
+      raw += x * x;
+      const s = x * win[i];
       buf[i] = s;
       energy += s * s;
     }
+    const rms = Math.sqrt(raw / N); // unwindowed level, for the noise gate
     const mag = magnitudeSpectrum(buf);
 
     let flux = 0;
@@ -153,13 +159,15 @@ function computeFrames(data, sampleRate) {
     }
     prevMag = mag;
 
+    const silent = rms < settings.silenceThreshold;
     const bass = bassFromMagnitude(mag, sampleRate, N);
     frames.push({
       time: start / sampleRate,
+      rms,
       chroma: chromaFromMagnitude(mag, sampleRate, N),
       bassPc: bass ? bass.pitchClass : -1,
       domFreq: dominantFreq(mag, sampleRate, N),
-      melodyMidi: recSettings.detectMelody ? melodyPitch(mag, sampleRate, N) : -1,
+      melodyMidi: (recSettings.detectMelody && !silent) ? melodyPitch(mag, sampleRate, N) : -1,
       flux,
       energy: Math.sqrt(energy / N),
     });
@@ -239,6 +247,15 @@ function octaveForPitchClass(pc, refFreq) {
  */
 function classifySegment(segFrames) {
   const chroma = medianChroma(segFrames);
+  // Noise gate: if the segment is quieter than the silence threshold, it's a
+  // rest — no music playing — regardless of what the chroma happens to match.
+  let meanRms = 0;
+  for (const f of segFrames) meanRms += f.rms;
+  meanRms /= segFrames.length || 1;
+  if (meanRms < settings.silenceThreshold) {
+    return { type: "none", display: "—", sub: "rest", midi: [] };
+  }
+
   const { best, sim } = classifyChroma(chroma);
   const refFreq = segFrames[Math.floor(segFrames.length / 2)].domFreq;
 
@@ -316,7 +333,10 @@ function medianFilterInt(arr, half) {
  * @returns {Array<object>} Melody segments with start/end and note display/MIDI.
  */
 function segmentMelody(frames, duration) {
-  const smooth = medianFilterInt(frames.map((f) => f.melodyMidi), recSettings.melodySmooth);
+  // Convert the ms smoothing window into a frame half-window.
+  const framesPerSec = frames.length > 1 ? 1 / (frames[1].time - frames[0].time) : 20;
+  const half = Math.max(0, Math.round((recSettings.melodySmoothMs / 1000) * framesPerSec / 2));
+  const smooth = medianFilterInt(frames.map((f) => f.melodyMidi), half);
 
   let runs = [];
   let startIdx = 0;
@@ -378,8 +398,39 @@ function analyzeRecording(audioBuffer) {
   segments = absorbShort(segments);
   segments = mergeAdjacent(segments);
 
-  const melody = recSettings.detectMelody ? segmentMelody(frames, duration) : [];
+  let melody = recSettings.detectMelody ? segmentMelody(frames, duration) : [];
+
+  // Optionally snap boundaries to the beat grid (assumes the take starts on a beat).
+  if (recSettings.snapToBeats && recSettings.bpm > 0) {
+    const beat = 60 / recSettings.bpm;
+    segments = snapToGrid(segments, beat, duration);
+    melody = snapToGrid(melody, beat, duration);
+  }
+
   return { duration, segments, melody };
+}
+
+/**
+ * Snap each segment boundary to the nearest beat, then drop zero-length
+ * segments and merge equal-label neighbours.
+ *
+ * @param {Array<object>} segments - Segments with start/end/key.
+ * @param {number} beat - Beat length in seconds.
+ * @param {number} duration - Recording length in seconds.
+ * @returns {Array<object>} The snapped, cleaned segments.
+ */
+function snapToGrid(segments, beat, duration) {
+  const snap = (t) => Math.round(t / beat) * beat;
+  const out = [];
+  for (const seg of segments) {
+    const start = Math.min(duration, Math.max(0, snap(seg.start)));
+    const end = Math.min(duration, Math.max(0, snap(seg.end)));
+    if (end - start < 1e-4) continue; // collapsed away by snapping
+    out.push({ ...seg, start, end });
+  }
+  // Close gaps/overlaps introduced by rounding, then merge equal labels.
+  for (let i = 1; i < out.length; i++) out[i].start = out[i - 1].end;
+  return mergeAdjacent(out.filter((s) => s.end > s.start));
 }
 
 /** Merge consecutive segments that share a label key. */

@@ -63,6 +63,7 @@ h1 { font-size: 1.25rem; font-weight: 600; margin: 0; color: var(--dim); }
   color: var(--accent);
   vertical-align: super;
 }
+.display .rest-icon { width: clamp(2.4rem, 12vw, 4rem); height: auto; color: var(--dim); }
 .display.chord small { color: var(--accent2); }
 
 .kind-label {
@@ -199,6 +200,17 @@ button.stop { background: #ef6e6e; color: #fff; }
 .settings label span { color: var(--accent); font-variant-numeric: tabular-nums; }
 .settings small { color: var(--dim); font-size: 0.75rem; }
 .settings input[type="range"] { width: 100%; accent-color: var(--accent); }
+.settings input[type="number"] {
+  width: 5rem;
+  font: inherit;
+  padding: 0.3rem 0.5rem;
+  border-radius: 8px;
+  background: var(--track);
+  color: var(--text);
+  border: 1px solid var(--border);
+  text-align: right;
+}
+.settings .control-note { display: block; color: var(--dim); font-size: 0.72rem; padding: 0.5rem 0 0.2rem; }
 .settings select {
   width: 100%;
   font: inherit;
@@ -285,6 +297,11 @@ button.stop { background: #ef6e6e; color: #fff; }
 .timeline.no-melody .lane-chords { top: 0; }
 .timeline-segments, .timeline-bars { position: absolute; inset: 0; }
 .timeline-bars { pointer-events: none; }
+
+/* beat / bar grid overlay */
+.timeline-grid { position: absolute; inset: 0; pointer-events: none; }
+.grid-line { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--border); }
+.grid-line.bar { background: color-mix(in srgb, var(--text) 32%, transparent); width: 2px; }
 
 /* melody note cells (top lane) */
 .mcell {

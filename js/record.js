@@ -18,6 +18,7 @@ const rec = {
     melodyLane: document.getElementById("melodyLane"),
     segmentsEl: document.getElementById("timelineSegments"),
     barsEl: document.getElementById("timelineBars"),
+    grid: document.getElementById("timelineGrid"),
     cursor: document.getElementById("cursor"),
     laneLabels: document.getElementById("laneLabels"),
     nowMelody: document.getElementById("nowMelody"),
@@ -46,14 +47,7 @@ const rec = {
 
 // Baseline timeline scale. The track is at least as wide as the viewport (so
 // short takes fill the screen) and grows past it for longer recordings.
-const PX_PER_SEC = 90;
-
-// Inline SVG rest (a half-rest: a filled block resting on a staff line). Drawn
-// rather than using a Unicode music glyph, which many fonts don't render.
-const REST_SVG =
-  '<svg class="rest-icon" viewBox="0 0 32 24" role="img" aria-label="rest">' +
-  '<line x1="6" y1="12" x2="26" y2="12" stroke="currentColor" stroke-width="1.6"/>' +
-  '<rect x="12" y="7.5" width="8" height="4.5" fill="currentColor"/></svg>';
+const PX_PER_SEC = 90; // REST_SVG is defined in music.js (shared with live mode)
 
 /** mm:ss formatting for the transport label. */
 function formatTime(sec) {
@@ -188,6 +182,7 @@ function renderTimeline() {
   const hasMelody = rec.melody.some((m) => m.type === "note");
   rec.els.timeline.classList.toggle("no-melody", !hasMelody);
   if (rec.els.laneLabels) rec.els.laneLabels.classList.toggle("no-melody", !hasMelody);
+  renderGrid();
   renderMelody();
 
   rec.els.segmentsEl.innerHTML = rec.segments.map((seg, i) => {
@@ -223,6 +218,21 @@ function renderBarlines() {
     }
   }
   rec.els.barsEl.innerHTML = bars.join("");
+}
+
+/** Draw the beat/bar grid when snapping to a tempo is enabled. */
+function renderGrid() {
+  if (!rec.els.grid) return;
+  if (!recSettings.snapToBeats || recSettings.bpm <= 0) { rec.els.grid.innerHTML = ""; return; }
+  const beat = 60 / recSettings.bpm;
+  const bpb = recSettings.beatsPerBar || 4;
+  const nBeats = Math.floor(rec.duration / beat);
+  const lines = [];
+  for (let b = 0; b <= nBeats; b++) {
+    const x = b * beat * rec.pxPerSec;
+    lines.push(`<div class="grid-line${b % bpb === 0 ? " bar" : ""}" style="left:${x}px"></div>`);
+  }
+  rec.els.grid.innerHTML = lines.join("");
 }
 
 /** Draw the melody note cells in the top lane (rests left blank). */
@@ -428,6 +438,7 @@ function setupRecordSettings() {
   slider("recOnset", "onsetSensitivity", (v) => v.toFixed(2));
   slider("recMinSeg", "minSegment", (v) => v.toFixed(2) + "s");
   slider("recMelodyLevel", "melodyMinLevel", (v) => v.toFixed(2));
+  slider("recMelodySmooth", "melodySmoothMs", (v) => Math.round(v) + " ms");
   slider("recMelodyMinSeg", "melodyMinSeg", (v) => v.toFixed(2) + "s");
 
   const fftEl = document.getElementById("recFft");
@@ -445,6 +456,37 @@ function setupRecordSettings() {
     melEl.addEventListener("change", () => {
       recSettings.detectMelody = melEl.checked;
       reanalyzeIfReady();
+    });
+  }
+
+  // Tempo controls: BPM, snap-to-beats, and beats per bar (grid).
+  const bpmEl = document.getElementById("recBpm");
+  if (bpmEl) {
+    bpmEl.value = recSettings.bpm;
+    bpmEl.addEventListener("change", () => {
+      recSettings.bpm = Math.max(20, Math.min(300, parseInt(bpmEl.value, 10) || 120));
+      bpmEl.value = recSettings.bpm;
+      if (recSettings.snapToBeats) reanalyzeIfReady();
+      else if (rec.audioBuffer) renderTimeline();
+    });
+  }
+
+  const snapEl = document.getElementById("recSnap");
+  if (snapEl) {
+    snapEl.checked = recSettings.snapToBeats;
+    snapEl.addEventListener("change", () => {
+      recSettings.snapToBeats = snapEl.checked;
+      reanalyzeIfReady();
+    });
+  }
+
+  const bpbEl = document.getElementById("recBeatsPerBar");
+  if (bpbEl) {
+    bpbEl.value = recSettings.beatsPerBar;
+    bpbEl.addEventListener("change", () => {
+      recSettings.beatsPerBar = Math.max(1, Math.min(12, parseInt(bpbEl.value, 10) || 4));
+      bpbEl.value = recSettings.beatsPerBar;
+      if (rec.audioBuffer) renderTimeline();
     });
   }
 }
