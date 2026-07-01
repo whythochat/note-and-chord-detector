@@ -53,7 +53,7 @@ The **Record** tab captures audio until you stop, then analyzes the whole record
 - **Onset detection** via spectral flux to place chord/note boundaries.
 - **Median aggregation** of each segment's chroma, rejecting transients, before classifying the segment as a whole.
 
-The result is an interactive **timeline** of labeled chord/note blocks. Press play (or click/scrub the track) and a cursor follows along, highlighting the current segment. From there you can:
+The result is an interactive **timeline** of labeled chord/note blocks at a fixed time scale: it fills the screen for short takes and **scrolls horizontally** for longer ones. Each block shows the chord name with its tones beneath (narrow blocks rotate their label and reveal detail on hover); silent stretches render as a **musical rest** with **barlines** marking each break. Press play (or click/scrub the track) and a cursor follows along, highlighting the current segment. From there you can:
 
 - **Play / scrub** the recording.
 - **Download audio** of the take.

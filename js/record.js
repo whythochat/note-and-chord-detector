@@ -14,7 +14,9 @@ const rec = {
     player: document.getElementById("player"),
     playBtn: document.getElementById("playBtn"),
     timeline: document.getElementById("timeline"),
+    track: document.getElementById("timelineTrack"),
     segmentsEl: document.getElementById("timelineSegments"),
+    barsEl: document.getElementById("timelineBars"),
     cursor: document.getElementById("cursor"),
     nowChord: document.getElementById("nowChord"),
     timeLabel: document.getElementById("timeLabel"),
@@ -34,7 +36,20 @@ const rec = {
   duration: 0,
   offlineCtx: null,
   playRaf: 0,
+  pxPerSec: 0,   // effective horizontal scale of the current render
+  trackWidth: 0, // rendered track width in px
 };
+
+// Baseline timeline scale. The track is at least as wide as the viewport (so
+// short takes fill the screen) and grows past it for longer recordings.
+const PX_PER_SEC = 90;
+
+// Inline SVG rest (a half-rest: a filled block resting on a staff line). Drawn
+// rather than using a Unicode music glyph, which many fonts don't render.
+const REST_SVG =
+  '<svg class="rest-icon" viewBox="0 0 32 24" role="img" aria-label="rest">' +
+  '<line x1="6" y1="12" x2="26" y2="12" stroke="currentColor" stroke-width="1.6"/>' +
+  '<rect x="12" y="7.5" width="8" height="4.5" fill="currentColor"/></svg>';
 
 /** mm:ss formatting for the transport label. */
 function formatTime(sec) {
@@ -144,22 +159,72 @@ function runAnalysis() {
 
 // ---------- timeline ----------
 
-/** Draw the chord/note segment blocks. */
-function renderTimeline() {
-  const total = rec.duration || 1;
-  rec.els.segmentsEl.innerHTML = rec.segments.map((seg, i) => {
-    const left = (seg.start / total) * 100;
-    const width = ((seg.end - seg.start) / total) * 100;
-    const cls = "seg seg-" + seg.type;
-    return `<div class="${cls}" data-i="${i}" style="left:${left}%;width:${width}%" title="${seg.sub}">` +
-      `<span>${seg.display}</span></div>`;
-  }).join("");
+/** Escape a string for safe use in an HTML attribute. */
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
-/** Move the cursor and update the "now playing" label for a given time. */
-function updatePlayhead(t) {
+/**
+ * Draw the segment blocks at a fixed pixels-per-second scale. The track fills
+ * the viewport for short recordings and overflows (scrolls) for longer ones.
+ * Rest blocks get a musical rest glyph, and barlines mark sound/silence breaks.
+ *
+ * @returns {void}
+ */
+function renderTimeline() {
   const total = rec.duration || 1;
-  rec.els.cursor.style.left = Math.max(0, Math.min(100, (t / total) * 100)) + "%";
+  const viewport = rec.els.timeline.clientWidth || 320;
+  // Fill the viewport at minimum; use PX_PER_SEC when that's wider.
+  rec.pxPerSec = Math.max(PX_PER_SEC, viewport / total);
+  rec.trackWidth = total * rec.pxPerSec;
+  rec.els.track.style.width = rec.trackWidth + "px";
+
+  rec.els.segmentsEl.innerHTML = rec.segments.map((seg, i) => {
+    const left = seg.start * rec.pxPerSec;
+    const width = Math.max(1, (seg.end - seg.start) * rec.pxPerSec);
+    const isRest = seg.type === "none";
+    // Legibility: rotate the label when narrow, hide it when tiny (tooltip only).
+    let sizeCls = "";
+    if (!isRest) sizeCls = width < 26 ? " tiny" : width < 62 ? " narrow" : "";
+    const tones = !isRest && seg.notes ? seg.notes.join(" ") : "";
+    const tip = isRest ? "rest (pause)" : esc(seg.sub || seg.display);
+    const inner = isRest
+      ? REST_SVG
+      : `<span class="seg-name">${esc(seg.display)}</span>` +
+        (tones ? `<span class="seg-tones">${esc(tones)}</span>` : "");
+    return `<div class="seg seg-${seg.type}${sizeCls}" data-i="${i}" ` +
+      `style="left:${left}px;width:${width}px" title="${tip}">${inner}</div>`;
+  }).join("");
+
+  renderBarlines();
+}
+
+/** Draw a barline at every transition between sound and silence. */
+function renderBarlines() {
+  const bars = [];
+  const segs = rec.segments;
+  for (let i = 0; i < segs.length - 1; i++) {
+    const aRest = segs[i].type === "none";
+    const bRest = segs[i + 1].type === "none";
+    if (aRest !== bRest) {
+      const x = segs[i].end * rec.pxPerSec;
+      bars.push(`<div class="barline" style="left:${x}px" title="break"></div>`);
+    }
+  }
+  rec.els.barsEl.innerHTML = bars.join("");
+}
+
+/**
+ * Move the cursor and update the "now playing" label for a given time.
+ *
+ * @param {number} t - Playback time in seconds.
+ * @param {boolean} [autoScroll] - Keep the cursor within the scroll viewport.
+ * @returns {void}
+ */
+function updatePlayhead(t, autoScroll) {
+  const total = rec.duration || 1;
+  const x = (t / total) * rec.trackWidth;
+  rec.els.cursor.style.left = Math.max(0, Math.min(rec.trackWidth, x)) + "px";
   rec.els.timeLabel.textContent = formatTime(t) + " / " + formatTime(rec.duration);
 
   let current = null;
@@ -170,7 +235,16 @@ function updatePlayhead(t) {
     if (blocks[i]) blocks[i].classList.toggle("active", active);
     if (active) current = seg;
   }
-  rec.els.nowChord.textContent = current ? current.display : "—";
+  if (current && current.type === "none") rec.els.nowChord.innerHTML = REST_SVG;
+  else rec.els.nowChord.textContent = current ? current.display : "—";
+
+  if (autoScroll) {
+    const cont = rec.els.timeline;
+    const margin = 60;
+    if (x < cont.scrollLeft + margin || x > cont.scrollLeft + cont.clientWidth - margin) {
+      cont.scrollLeft = x - cont.clientWidth / 2;
+    }
+  }
 }
 
 // ---------- playback ----------
@@ -178,7 +252,7 @@ function updatePlayhead(t) {
 /** Start the playback cursor animation loop. */
 function playbackLoop() {
   if (!rec.audio) return;
-  updatePlayhead(rec.audio.currentTime);
+  updatePlayhead(rec.audio.currentTime, true);
   if (!rec.audio.paused) rec.playRaf = requestAnimationFrame(playbackLoop);
 }
 
@@ -204,27 +278,36 @@ function togglePlayback() {
 
 // ---------- seeking / scrubbing ----------
 
-/** Convert a pointer event on the timeline to a time and seek there. */
+/** Convert a pointer event on the track to a time and seek there. */
 function seekToEvent(e) {
-  if (!rec.audio) return;
-  const r = rec.els.timeline.getBoundingClientRect();
-  const x = Math.max(0, Math.min(r.width, e.clientX - r.left));
-  const t = (x / r.width) * rec.duration;
+  if (!rec.audio || !rec.trackWidth) return;
+  const r = rec.els.track.getBoundingClientRect();
+  const x = Math.max(0, Math.min(rec.trackWidth, e.clientX - r.left));
+  const t = (x / rec.trackWidth) * rec.duration;
   rec.audio.currentTime = t;
   updatePlayhead(t);
 }
 
 function setupScrubbing() {
   let dragging = false;
-  rec.els.timeline.addEventListener("pointerdown", (e) => {
+  rec.els.track.addEventListener("pointerdown", (e) => {
     dragging = true;
-    rec.els.timeline.setPointerCapture(e.pointerId);
+    rec.els.track.setPointerCapture(e.pointerId);
     seekToEvent(e);
   });
-  rec.els.timeline.addEventListener("pointermove", (e) => { if (dragging) seekToEvent(e); });
-  rec.els.timeline.addEventListener("pointerup", (e) => {
+  rec.els.track.addEventListener("pointermove", (e) => { if (dragging) seekToEvent(e); });
+  rec.els.track.addEventListener("pointerup", (e) => {
     dragging = false;
-    rec.els.timeline.releasePointerCapture(e.pointerId);
+    rec.els.track.releasePointerCapture(e.pointerId);
+  });
+
+  // Re-fit the scale when the viewport width changes.
+  window.addEventListener("resize", () => {
+    if (rec.segments.length) {
+      const t = rec.audio ? rec.audio.currentTime : 0;
+      renderTimeline();
+      updatePlayhead(t);
+    }
   });
 }
 
